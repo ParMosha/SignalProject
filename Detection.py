@@ -12,9 +12,8 @@ import tensorflow_hub as hub
 
 
 def get_faster_rcnn_model(num_classes):
-    model_path = "https://tfhub.dev/google/faster_rcnn/openimages_v4/inception_resnet_v2/1"
-    model = hub.load(model_path).signatures['default']
-    # model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True,weights='DEFAULT')
+    
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     return model
