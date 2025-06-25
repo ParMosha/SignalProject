@@ -7,10 +7,14 @@ import requests
 from io import BytesIO
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import tensorflow_hub as hub
+
 
 
 def get_faster_rcnn_model(num_classes):
-    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+    model_path = "https://tfhub.dev/google/faster_rcnn/openimages_v4/inception_resnet_v2/1"
+    model = hub.load(model_path).signatures['default']
+    # model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     return model
@@ -50,7 +54,7 @@ def visualize_detections(image, detections):
 
 if __name__ == "__main__":
     # num_classes = int(input("Enter number of classes (including background): "))
-    num_classes = 2
+    num_classes = 3
     model = get_faster_rcnn_model(num_classes)
     image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/9.jpg"
     image = load_image_from_url(image_url)
