@@ -4,8 +4,9 @@ import urllib.request
 
 # Path to manually downloaded weights
 weights_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolov5s.pt"
-weights_path = '/your/readable/path/yolov5s.pt'
-model = torch.hub.load('ultralytics/yolov5', 'custom', path=weights_path, source='local')
+weights_path = "downloaded_weights.pt"
+urllib.request.urlretrieve(weights_url, weights_path)
+model = torch.hub.load('ultralytics/yolov5', 'custom', path=weights_path, force_reload=True)
 
 def detect_objects(image_path):
     img = cv2.imread(image_path)
@@ -23,7 +24,7 @@ def detect_objects(image_path):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/9.jpg"
+    image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/image.png"
     image_path = "downloaded_image.jpg"
     urllib.request.urlretrieve(image_url, image_path)
     detect_objects(image_path)
