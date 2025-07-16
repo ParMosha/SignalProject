@@ -63,7 +63,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes = 2  # Including background
     model = get_faster_rcnn_model(num_classes).to(device)
-    image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/9.jpg"
+    image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/image.png"
     image = load_image_from_url(image_url)
     threshold = 0.5
     detections, prediction = detect_objects(model, image, threshold, device)
