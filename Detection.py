@@ -3,10 +3,17 @@ import torch
 import urllib.request
 
 # Path to manually downloaded weights
+<<<<<<< HEAD
+weights_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolo11s.pt"
+weights_path = "downloaded_weights.pt"
+urllib.request.urlretrieve(weights_url, weights_path)
+model = torch.hub.load('ultralytics/yolo11s', 'custom', path=weights_path, force_reload=True)
+=======
 weights_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolov5s.pt"
 weights_path = "downloaded_weights.pt"
 urllib.request.urlretrieve(weights_url, weights_path)
 model = torch.hub.load('ultralytics/yolov5', 'custom', path=weights_path, force_reload=True)
+>>>>>>> a49a89d39ffe6a8878fec5a860b992976baece76
 
 def detect_objects(image_path):
     img = cv2.imread(image_path)
