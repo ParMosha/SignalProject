@@ -1,37 +1,57 @@
 import cv2
 import torch
+from ultralytics import YOLO
 import urllib.request
 
-# Path to manually downloaded weights
-<<<<<<< HEAD
-weights_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolo11s.pt"
-weights_path = "downloaded_weights.pt"
-urllib.request.urlretrieve(weights_url, weights_path)
-model = torch.hub.load('ultralytics/yolo11s', 'custom', path=weights_path, force_reload=True)
-=======
-weights_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolov5s.pt"
-weights_path = "downloaded_weights.pt"
-urllib.request.urlretrieve(weights_url, weights_path)
-model = torch.hub.load('ultralytics/yolov5', 'custom', path=weights_path, force_reload=True)
->>>>>>> a49a89d39ffe6a8878fec5a860b992976baece76
+def load_model(model_path):
+    """
+    Load the YOLO model from the specified path.
+    """
+    try:
+        model = YOLO(model_path)
+        return model
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return None
 
-def detect_objects(image_path):
-    img = cv2.imread(image_path)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = model(img_rgb)
-    detections = results.pandas().xyxy[0]
-    for _, row in detections.iterrows():
-        x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
-        label = row['name']
-        conf = row['confidence']
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0,255,0), 2)
-        cv2.putText(img, f'{label} {conf:.2f}', (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
-    cv2.imshow('Detections', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def detect_objects(model, image_path):
+    """
+    Detect objects in the image using the YOLO model.
+    """
+    try:
+        image = cv2.imread(image_path)
+        if image is None:
+            raise ValueError("Image not found or unable to read.")
+        
+        results = model(image)
+        return results
+    except Exception as e:
+        print(f"Error detecting objects: {e}")
+        return None
 
-if __name__ == "__main__":
+def download_image(url, save_path):
+    """
+    Download an image from a URL and save it to the specified path.
+    """
+    try:
+        urllib.request.urlretrieve(url, save_path)
+        print(f"Image downloaded and saved to {save_path}")
+    except Exception as e:
+        print(f"Error downloading image: {e}")
+    
+def main():
+    model_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/yolo11s.pt"
+    model_path = "downloaded_weights.pt"
+    urllib.request.urlretrieve(model_url, model_path)
     image_url = "https://raw.githubusercontent.com/ParMosha/SignalProject/main/image.png"
-    image_path = "downloaded_image.jpg"
+    image_path = 'input_image.jpg'  # Path to the input image
     urllib.request.urlretrieve(image_url, image_path)
-    detect_objects(image_path)
+    model = load_model(model_path)
+    if model:
+        results = detect_objects(model, image_path)
+        if results:
+            print("Detection results:", results)
+        else:
+            print("No objects detected or an error occurred.")
+if __name__ == "__main__":
+    main()
