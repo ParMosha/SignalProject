@@ -7,6 +7,8 @@ def show_camera_with_kcf(source=0):
 
     while True:
         ret, frame = cap.read()
+        if not ret:
+            break
 
         if initBB is not None:
             success, box = tracker.update(frame)
@@ -36,4 +38,14 @@ def show_camera_with_kcf(source=0):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    show_camera_with_kcf(0)
+    print("Choose input source:")
+    print("1. Webcam (real-time)")
+    print("2. Video file")
+    choice = input("Enter 1 or 2: ").strip()
+    if choice == "1":
+        show_camera_with_kcf(0)
+    elif choice == "2":
+        video_path = input("Enter path to video file: ").strip()
+        show_camera_with_kcf(video_path)
+    else:
+        print("Invalid choice.")
