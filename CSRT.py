@@ -1,71 +1,66 @@
 import cv2
-import numpy as np
 
-class AdvancedCSRTTracker:
-    def __init__(self, learning_rate=0.02, padding=2.0, sigma=0.2, lambda_=0.01):
-        self.tracker = cv2.TrackerCSRT_create()
-        
-        # Set parameters (these are similar to the ones in the paper)
-        self.tracker.setInitialLearningRate(learning_rate)
-        self.tracker.setPadding(padding)
-        self.tracker.setSigma(sigma)  # Gaussian kernel bandwidth
-        self.tracker.setKernelLambda(lambda_)  # Regularization
-        
-    def init(self, frame, bbox):
-        """Initialize tracker with first frame and bounding box"""
-        return self.tracker.init(frame, bbox)
-    
-    def update(self, frame):
-        """Update tracker with new frame"""
-        success, bbox = self.tracker.update(frame)
-        return success, bbox
-    
-    def get_channel_weights(self):
-        """Get the channel reliability weights (if available)"""
-        # Note: OpenCV's implementation doesn't expose all internal parameters directly
-        # This would require a custom implementation
-        pass
-    
-    def get_spatial_reliability_map(self):
-        """Get the spatial reliability map (if available)"""
-        # Note: OpenCV's implementation doesn't expose all internal parameters directly
-        # This would require a custom implementation
-        pass
+tracker = cv2.TrackerCSRT_create()
 
-# Usage example
-if __name__ == "__main__":
-    cap = cv2.VideoCapture(0)  # Webcam
-    
+# استفاده از دوربین لپتاپ (0) یا مسیر فایل ویدیویی
+video_source = 0  # یا مسیر فایل مانند 'video.mp4'
+cap = cv2.VideoCapture(video_source)
+
+if not cap.isOpened():
+    print("Error: Could not open video source")
+    exit()
+
+ret, frame = cap.read()
+if not ret:
+    print("Error: Could not read frame")
+    exit()
+
+bbox = cv2.selectROI("Select Object to Track", frame, False)
+cv2.destroyWindow("Select Object to Track")
+
+ret = tracker.init(frame, bbox)
+if not ret:
+    print("Error: Tracker initialization failed")
+    exit()
+
+fps = 0
+frame_count = 0
+start_time = cv2.getTickCount()
+
+while True:
     ret, frame = cap.read()
     if not ret:
-        print("Error reading video")
-        exit()
+        break
     
-    # Select ROI
-    roi = cv2.selectROI("Select Object", frame, False, False)
-    cv2.destroyWindow("Select Object")
+    timer = cv2.getTickCount()
+    ret, bbox = tracker.update(frame)
     
-    # Initialize our advanced tracker
-    tracker = AdvancedCSRTTracker(learning_rate=0.03, sigma=0.1)
-    tracker.init(frame, roi)
+    frame_count += 1
+    if frame_count >= 10:
+        end_time = cv2.getTickCount()
+        fps = 10 * cv2.getTickFrequency() / (end_time - start_time)
+        start_time = end_time
+        frame_count = 0
     
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    if ret:
+        p1 = (int(bbox[0]), int(bbox[1]))
+        p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
+        cv2.rectangle(frame, p1, p2, (255, 0, 0), 2, 1)
         
-        success, bbox = tracker.update(frame)
-        
-        if success:
-            x, y, w, h = [int(v) for v in bbox]
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(frame, "Advanced CSRT Tracking", (x, y-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        cv2.imshow("Advanced CSRT Tracker", frame)
-        
-        if cv2.waitKey(30) & 0xFF == 27:
-            break
+        cv2.putText(frame, f"CSRT Tracker", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 60), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+        cv2.putText(frame, f"Status: Tracking", (10, 90), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+    else:
+        cv2.putText(frame, "Tracking failure detected", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
     
-    cap.release()
-    cv2.destroyAllWindows()
+    cv2.imshow("CSRT Tracking", frame)
+    
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+cap.release()
+cv2.destroyAllWindows()
