@@ -64,6 +64,9 @@ def main():
                 cap.release()
                 return
         
+        cv2.namedWindow("CSRT Tracking", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("CSRT Tracking", 800, 600)  
+        
         fps = 0
         frame_count = 0
         start_time = cv2.getTickCount()
@@ -73,9 +76,9 @@ def main():
             ret, frame = cap.read()
             
             if not ret:
-                if video_source == 0: 
+                if video_source == 0:  
                     break
-      
+                
                 video_loops += 1
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 ret, frame = cap.read()
@@ -92,29 +95,37 @@ def main():
                 start_time = end_time
                 frame_count = 0
             
+            display_frame = frame.copy()
+            
             if ret:
                 p1 = (int(bbox[0]), int(bbox[1]))
                 p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
-                cv2.rectangle(frame, p1, p2, (255, 0, 0), 2, 1)
-                cv2.putText(frame, "CSRT Tracker", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
-                cv2.putText(frame, f"FPS: {fps:.2f}", (10, 60), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
-                cv2.putText(frame, "Status: Tracking", (10, 90), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+                cv2.rectangle(display_frame, p1, p2, (255, 0, 0), 2, 1)
+                
+                font_scale = display_frame.shape[1] / 1000  
+                thickness = max(1, int(font_scale * 2))
+                
+                cv2.putText(display_frame, "CSRT Tracker", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), thickness)
+                cv2.putText(display_frame, f"FPS: {fps:.2f}", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), thickness)
+                cv2.putText(display_frame, "Status: Tracking", (10, 90), 
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), thickness)
                 if video_source != 0:
-                    cv2.putText(frame, f"Loops: {video_loops}", (10, 120),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+                    cv2.putText(display_frame, f"Loops: {video_loops}", (10, 120),
+                                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), thickness)
             else:
-                cv2.putText(frame, "Tracking failure", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+                cv2.putText(display_frame, "Tracking failure", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 255), thickness)
             
-            cv2.putText(frame, "Press ESC to exit", (frame.shape[1]-200, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+            cv2.putText(display_frame, "Press ESC to exit", 
+                        (display_frame.shape[1]-200, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 255), thickness)
             
-            cv2.imshow("CSRT Tracking", frame)
+            cv2.imshow("CSRT Tracking", display_frame)
             
-            if cv2.waitKey(1) & 0xFF == 27:
+            key = cv2.waitKey(1)
+            if key == 27:  
                 break
                 
     except Exception as e:
