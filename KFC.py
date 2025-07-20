@@ -7,11 +7,35 @@ def show_camera_with_kcf(source=0):
     tracker = cv2.TrackerKCF_create()
     initBB = None
 
+    ret, first_frame = cap.read()
+    if not ret:
+        print("Failed to read from video source")
+        return
+    
+    cv2.putText(first_frame, "Select object to track, then press SPACE to continue", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.imshow('KCF Tracker', first_frame)
+    
+    print("Select the object you want to track in the video window, then press SPACE to start tracking")
+    while True:
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:  # ESC to exit
+            cap.release()
+            cv2.destroyAllWindows()
+            return
+        elif key == ord(' '): 
+            initBB = cv2.selectROI('KCF Tracker', first_frame, fromCenter=False, showCrosshair=True)
+            if initBB[2] > 0 and initBB[3] > 0:
+                tracker.init(first_frame, initBB)
+                break
+            else:
+                print("Invalid selection. Try again by pressing SPACE")
 
     times = []
     max_samples = 30
     prev_time = time.time()
     avg_fps = 0.0
+    
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -39,9 +63,6 @@ def show_camera_with_kcf(source=0):
             else:
                 cv2.putText(frame, "Tracking failure", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        else:
-            cv2.putText(frame, "Press 's' to select object to track", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         cv2.putText(frame, f"Avg FPS: {avg_fps:.2f}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -51,12 +72,6 @@ def show_camera_with_kcf(source=0):
 
         if key == 27:  # ESC to exit
             break
-        elif key == ord('s') and initBB is None:
-            initBB = cv2.selectROI('KCF Tracker', frame, fromCenter=False, showCrosshair=True)
-            if initBB[2] > 0 and initBB[3] > 0:
-                tracker.init(frame, initBB)
-            else:
-                initBB = None
 
     cap.release()
     cv2.destroyAllWindows()
