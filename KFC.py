@@ -9,7 +9,7 @@ def show_camera_with_kcf(source=0):
 
 
     times = []
-    max_samples = 30  # sliding window size for FPS smoothing
+    max_samples = 30
     prev_time = time.time()
     avg_fps = 0.0
     while True:
@@ -22,7 +22,6 @@ def show_camera_with_kcf(source=0):
         if len(times) > max_samples:
             times.pop(0)
         if len(times) > 1:
-            # Use numpy for efficient calculation
             intervals = np.diff(np.array(times))
             mean_interval = np.mean(intervals)
             if mean_interval > 0:
@@ -44,7 +43,6 @@ def show_camera_with_kcf(source=0):
             cv2.putText(frame, "Press 's' to select object to track", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        # Display average FPS
         cv2.putText(frame, f"Avg FPS: {avg_fps:.2f}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
