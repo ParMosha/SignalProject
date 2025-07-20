@@ -1,14 +1,36 @@
 import cv2
+import time
+import numpy as np
 
 def show_camera_with_kcf(source=0):
     cap = cv2.VideoCapture(source)
     tracker = cv2.TrackerKCF_create()
     initBB = None
 
+
+    times = []
+    max_samples = 30  # sliding window size for FPS smoothing
+    prev_time = time.time()
+    avg_fps = 0.0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
+        curr_time = time.time()
+        times.append(curr_time)
+        if len(times) > max_samples:
+            times.pop(0)
+        if len(times) > 1:
+            # Use numpy for efficient calculation
+            intervals = np.diff(np.array(times))
+            mean_interval = np.mean(intervals)
+            if mean_interval > 0:
+                avg_fps = 1.0 / mean_interval
+            else:
+                avg_fps = 0.0
+        else:
+            avg_fps = 0.0
 
         if initBB is not None:
             success, box = tracker.update(frame)
@@ -21,6 +43,10 @@ def show_camera_with_kcf(source=0):
         else:
             cv2.putText(frame, "Press 's' to select object to track", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # Display average FPS
+        cv2.putText(frame, f"Avg FPS: {avg_fps:.2f}", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
         cv2.imshow('KCF Tracker', frame)
         key = cv2.waitKey(1) & 0xFF
