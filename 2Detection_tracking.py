@@ -54,7 +54,7 @@ class YOLOMultiTracker:
 
 
 def main():
-    # --- انتخاب منبع ویدیو ---
+  
     print("Select source:")
     print("  1) Camera")
     print("  2) Video file")
@@ -63,7 +63,7 @@ def main():
     if choice == '2':
         source = input("Enter path to video file: ").strip()
     else:
-        source = 0  # پیش‌فرض وب‌کم
+        source = 0  
 
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -84,7 +84,6 @@ def main():
 
         detected, objects = tracker.update(frame)
 
-        # رسم تمام جعبه‌های تشخیص داده‌شده
         for obj in objects:
             x, y, w, h = obj['box']
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -92,7 +91,6 @@ def main():
             cv2.putText(frame, label, (x, y - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # نمایش وضعیت و FPS
         status = "Detecting" if detected else "Tracking"
         cv2.putText(frame, status, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -101,7 +99,7 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         cv2.imshow("YOLO Multi-Object Tracker", frame)
-        if cv2.waitKey(1) & 0xFF == 27:  # کلید ESC
+        if cv2.waitKey(1) & 0xFF == 27: 
             break
 
     cap.release()
