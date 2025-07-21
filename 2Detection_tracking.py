@@ -70,13 +70,48 @@ class YOLOTracker:
         
         return False, self.current_object
 
+def select_video_source():
+    print("1. استفاده از دوربین لپتاپ")
+    print("2. استفاده از فایل ویدیویی")
+    while True:
+        choice = input("لطفاً گزینه مورد نظر را انتخاب کنید (1 یا 2): ")
+        if choice == '1':
+            return 0
+        elif choice == '2':
+            video_path = input("لطفاً مسیر کامل فایل ویدیویی را وارد کنید: ").strip('"\'')
+            return video_path
+        else:
+            print("گزینه نامعتبر! لطفاً 1 یا 2 وارد کنید")
+
 def main():
+    video_source = select_video_source()
     tracker = YOLOTracker('yolov8n.pt')
-    cap = cv2.VideoCapture(0)
+    
+    if isinstance(video_source, str):
+        cap = cv2.VideoCapture(video_source)
+    else:
+        cap = cv2.VideoCapture(video_source)
+    
+    if not cap.isOpened():
+        print("خطا: نمی‌توان منبع ویدیو را باز کرد")
+        return
+    
+    ret, frame = cap.read()
+    if not ret:
+        print("خطا: نمی‌توان فریم را خواند")
+        cap.release()
+        return
+    
+    bbox = cv2.selectROI("انتخاب شیء برای ردیابی", frame, False)
+    cv2.destroyWindow("انتخاب شیء برای ردیابی")
+    tracker.initialize(frame, bbox)
     
     while True:
         ret, frame = cap.read()
         if not ret:
+            if isinstance(video_source, str):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
             break
         
         detected, obj = tracker.update(frame)
@@ -91,13 +126,13 @@ def main():
                 x_sr, y_sr, w_sr, h_sr = tracker.search_region
                 cv2.rectangle(frame, (x_sr, y_sr), (x_sr+w_sr, y_sr+h_sr), (255, 0, 0), 1)
         
-        status = "Detecting" if detected else "Tracking"
+        status = "تشخیص" if detected else "ردیابی"
         cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
         fps = 1 / (time.time() - tracker.last_detection_time) if tracker.last_detection_time else 0
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         
-        cv2.imshow("YOLO Object Tracker", frame)
+        cv2.imshow("سیستم ردیابی YOLO", frame)
         
         if cv2.waitKey(1) == 27:
             break
