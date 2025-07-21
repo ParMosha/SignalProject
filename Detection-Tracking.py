@@ -1,189 +1,174 @@
 import cv2
-import numpy as np
 import time
+import threading
+import collections
+from ultralytics import YOLO
 
-class KalmanFilter:
-    def __init__(self):
-        self.kf = cv2.KalmanFilter(8, 4)
-        self.kf.measurementMatrix = np.array([[1,0,0,0,0,0,0,0],
-                                             [0,1,0,0,0,0,0,0],
-                                             [0,0,1,0,0,0,0,0],
-                                             [0,0,0,1,0,0,0,0]], np.float32)
-        self.kf.transitionMatrix = np.array([[1,0,0,0,1,0,0,0],
-                                            [0,1,0,0,0,1,0,0],
-                                            [0,0,1,0,0,0,1,0],
-                                            [0,0,0,1,0,0,0,1],
-                                            [0,0,0,0,1,0,0,0],
-                                            [0,0,0,0,0,1,0,0],
-                                            [0,0,0,0,0,0,1,0],
-                                            [0,0,0,0,0,0,0,1]], np.float32)
-        self.kf.processNoiseCov = np.eye(8, dtype=np.float32) * 1e-2
-        self.kf.measurementNoiseCov = np.eye(4, dtype=np.float32) * 1e-1
-        
-    def init(self, bbox):
-        """مقداردهی اولیه با جعبه مرزی اولیه"""
-        x, y, w, h = bbox
-        self.kf.statePost = np.array([[x], [y], [w], [h], [0], [0], [0], [0]], dtype=np.float32)
-        
-    def predict(self):
-        """پیش‌بینی موقعیت بعدی"""
-        prediction = self.kf.predict()
-        return (prediction[0][0], prediction[1][0], prediction[2][0], prediction[3][0])
-        
-    def update(self, bbox):
-        """به‌روزرسانی با اندازه‌گیری جدید"""
-        x, y, w, h = bbox
-        measurement = np.array([[x], [y], [w], [h]], dtype=np.float32)
-        self.kf.correct(measurement)
+class YOLOMultiTracker:
+    def __init__(self, model_path='yolov8n.pt', confidence_threshold=0.5, detection_interval=0.1):
+        self.model = YOLO(model_path)
+        self.conf_thr = confidence_threshold
+        self.det_interval = detection_interval
+        self.last_det_time = 0.0
+        self.current_objects = []
 
-class AdvancedTracker:
-    """سیستم ردیابی پیشرفته ترکیبی"""
-    def __init__(self):
-        self.tracker = None
-        self.kalman = KalmanFilter()
-        self.lost_count = 0
-        self.max_lost = 15
-        self.scale_factor = 1.0
-        self.prev_feature = None
-        self.fps = 0
-        self.frame_count = 0
-        self.start_time = time.time()
-        
-    def initialize(self, frame, bbox):
-        """مقداردهی اولیه ردیاب"""
-        self.tracker = cv2.TrackerCSRT_create()
-        self.tracker.init(frame, bbox)
-        self.kalman.init(bbox)
-        self.prev_feature = self.calc_hist_feature(frame, bbox)
-        
-    def calc_hist_feature(self, frame, bbox):
-        """محاسبه ویژگی هیستوگرام برای تشخیص تغییر مقیاس"""
-        x, y, w, h = [int(v) for v in bbox]
-        roi = frame[y:y+h, x:x+w]
-        if roi.size == 0:
-            return 0
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        hist = cv2.calcHist([gray], [0], None, [256], [0,256])
-        return np.sum(hist[50:200])
-        
-    def adjust_scale(self, frame, bbox):
-        """تنظیم خودکار اندازه جعبه مرزی"""
-        current_feature = self.calc_hist_feature(frame, bbox)
-        
-        if self.prev_feature is not None and self.prev_feature > 0:
-            scale_change = current_feature / self.prev_feature
-            self.scale_factor *= scale_change
-            self.scale_factor = np.clip(self.scale_factor, 0.5, 2.0)
-            
-        self.prev_feature = current_feature
-        x, y, w, h = bbox
-        return (x, y, w*self.scale_factor, h*self.scale_factor)
-        
+    def detect_objects(self, frame):
+        results = self.model(frame, verbose=False)
+        objs = []
+        for res in results:
+            for box in res.boxes:
+                conf = box.conf.item()
+                if conf < self.conf_thr:
+                    continue
+                cls_id = int(box.cls.item())
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                objs.append({
+                    'class_id':   cls_id,
+                    'class_name': self.model.names[cls_id],
+                    'confidence': conf,
+                    'box':        (x1, y1, x2-x1, y2-y1)
+                })
+        return objs
+
     def update(self, frame):
-        """به‌روزرسانی موقعیت شیء"""
-        # محاسبه FPS
-        self.frame_count += 1
-        if self.frame_count >= 10:
-            self.fps = self.frame_count / (time.time() - self.start_time)
-            self.start_time = time.time()
-            self.frame_count = 0
-            
-        # ردیابی با CSRT
-        success, bbox = self.tracker.update(frame)
-        
-        if success:
-            self.lost_count = 0
-            bbox = self.adjust_scale(frame, bbox)
-            self.kalman.update(bbox)
-            return True, bbox
-        else:
-            self.lost_count += 1
-            if self.lost_count > self.max_lost:
-                return False, None
-            predicted = self.kalman.predict()
-            return False, predicted
+        now = time.time()
+        if now - self.last_det_time >= self.det_interval:
+            self.current_objects = self.detect_objects(frame)
+            self.last_det_time = now
+            return True, self.current_objects
+        return False, self.current_objects
 
-def select_video_source():
-    """انتخاب منبع ویدیو"""
-    print("1. Use laptop camera")
-    print("2. Use video file")
-    while True:
-        choice = input("Please select an option (1 or 2): ")
-        if choice == '1':
-            return 0
-        elif choice == '2':
-            while True:
-                video_path = input("Please enter video file path: ").strip('"\'')
-                video_path = video_path.replace("\\", "/")  # اصلاح مسیر برای ویندوز
-                if os.path.exists(video_path):
-                    return video_path
-                print(f"Error: File not found at {video_path}")
+class ChunkWorker(threading.Thread):
+    """
+    Thread برای پیش‌پردازش یک chunk یک‌ثانیه‌ای
+    نتایج در result_list ذخیره می‌شود.
+    """
+    def __init__(self, frames, result_list):
+        super().__init__(daemon=True)
+        self.frames = frames
+        self.results = result_list
+        self.tracker = YOLOMultiTracker(
+            model_path='yolov8n.pt',
+            confidence_threshold=0.5,
+            detection_interval=0.1
+        )
+
+    def run(self):
+        for i, frame in enumerate(self.frames):
+            did, objs = self.tracker.update(frame)
+            self.results[i] = (did, objs)
 
 def main():
-    """تابع اصلی اجرای سیستم ردیابی"""
-    # انتخاب منبع ویدیو
-    video_source = select_video_source()
-    cap = cv2.VideoCapture(video_source)
-    
+    print("Select source:")
+    print("  1) Camera")
+    print("  2) Video file")
+    choice = input("Enter 1 or 2: ").strip()
+    source = 0 if choice == '1' else input("Enter video path: ").strip()
+
+    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print("Error: Could not open video source")
+        print(f"Cannot open {source}")
         return
-        
-    # خواندن اولین فریم
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Could not read video frame")
+
+    # فقط برای ویدیو
+    if source != 0:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        chunk_size = int(fps * 1.0)              # فریم‌های معادل یک ثانیه
+        frame_delay = int(1000 / fps)
+
+        # خواندن دو chunk اولیه
+        def read_chunk():
+            buf = []
+            for _ in range(chunk_size):
+                ret, frm = cap.read()
+                if not ret:
+                    break
+                buf.append(frm.copy())
+            return buf
+
+        frames0 = read_chunk()
+        frames1 = read_chunk()
+        if not frames0:
+            return
+
+        # رزرو نتایج
+        results0 = [None] * len(frames0)
+        results1 = [None] * len(frames1)
+
+        # پردازش Chunk0 سینک (همان ترد اصلی)
+        wk0 = ChunkWorker(frames0, results0)
+        wk0.run()
+
+        # استارت پردازش Chunk1 در ترد جدا
+        wk1 = ChunkWorker(frames1, results1)
+        wk1.start()
+
+        current_frames, current_results = frames0, results0
+        next_worker, next_frames, next_results = wk1, frames1, results1
+
+        # حلقه نمایش و پیش‌پردازش بعدی
+        while current_frames:
+            # نمایش chunk فعلی
+            for frm, res in zip(current_frames, current_results):
+                did, objs = res
+                for obj in objs:
+                    x, y, w, h = obj['box']
+                    cv2.rectangle(frm, (x, y), (x+w, y+h), (0,255,0), 2)
+                    lbl = f"{obj['class_name']}:{obj['confidence']:.2f}"
+                    cv2.putText(frm, lbl, (x, y-6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
+                cv2.imshow("Tracker", frm)
+                if cv2.waitKey(frame_delay) & 0xFF == 27:
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return
+
+            # منتظر اتمام کار ترد بعدی می‌مانیم
+            next_worker.join()
+
+            # آماده‌سازی برای chunk بعدی
+            current_frames, current_results = next_frames, next_results
+
+            # خواندن و استارت پردازش chunk جدید
+            new_frames = read_chunk()
+            if not new_frames:
+                break
+            new_results = [None] * len(new_frames)
+            new_worker = ChunkWorker(new_frames, new_results)
+            new_worker.start()
+
+            # جابجایی
+            next_worker, next_frames, next_results = new_worker, new_frames, new_results
+
         cap.release()
-        return
-    
-    # انتخاب شیء برای ردیابی
-    bbox = cv2.selectROI("Select Object to Track", frame, False)
-    cv2.destroyWindow("Select Object to Track")
-    
-    # مقداردهی اولیه ردیاب
-    tracker = AdvancedTracker()
-    tracker.initialize(frame, bbox)
-    
-    # حلقه اصلی پردازش
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            # بازپخش ویدیو اگر از فایل استفاده می‌شود
-            if video_source != 0:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
-            break
-            
-        # ردیابی شیء
-        success, bbox = tracker.update(frame)
-        
-        # نمایش نتایج
-        if success:
-            x, y, w, h = [int(v) for v in bbox]
-            cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
-            status = "Tracking"
-            color = (0, 255, 0)
-        else:
-            status = "Searching..."
-            color = (0, 0, 255)
-            
-        # نمایش اطلاعات
-        cv2.putText(frame, f"Status: {status}", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-        cv2.putText(frame, f"FPS: {tracker.fps:.2f}", (10, 70), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2)
-        cv2.putText(frame, "Press ESC to exit", (frame.shape[1]-200, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0,0,255), 2)
-        
-        cv2.imshow("Advanced Object Tracker", frame)
-        
-        # خروج با کلید ESC
-        if cv2.waitKey(1) == 27:
-            break
-            
-    cap.release()
-    cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
+
+    # برای وب‌کم: همان الگوریتم اصلی بدون تغییر
+    else:
+        tracker = YOLOMultiTracker(
+            model_path='yolov8n.pt',
+            confidence_threshold=0.5,
+            detection_interval=0.1
+        )
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            det, objs = tracker.update(frame)
+            for obj in objs:
+                x, y, w, h = obj['box']
+                cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+                lbl = f"{obj['class_name']}:{obj['confidence']:.2f}"
+                cv2.putText(frame, lbl, (x,y-6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
+            status = "Detecting" if det else "Tracking"
+            cv2.putText(frame, status, (10,30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+            cv2.imshow("Tracker", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+        cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    import os
     main()
