@@ -1,0 +1,165 @@
+import cv2
+import numpy as np
+
+class MOSSETracker:
+    def __init__(self, learning_rate=0.125):
+        # Initialize tracker parameters
+        self.learning_rate = learning_rate
+        self.filter = None      # Correlation filter in frequency domain
+        self.gaussian = None    # Desired Gaussian response
+        self.window_size = None # Tracking window size (width, height)
+        self.position = None    # Current target position (center x, y)
+        self.eps = 1e-5         # Small constant to avoid division by zero
+
+    def _create_gaussian_response(self, size):
+        """Create 2D Gaussian response for target region"""
+        h, w = size
+        sigma = h / 8  # Standard deviation
+        y, x = np.mgrid[-h//2:h//2, -w//2:w//2]  # Grid coordinates
+        return np.exp(-(x**2 + y**2) / (2 * sigma**2))  # 2D Gaussian
+
+    def _preprocess(self, image):
+        """Preprocess image before FFT"""
+        # Log transform for better contrast
+        processed = np.log(image + 1)
+        # Normalize image
+        processed = (processed - processed.mean()) / (processed.std() + self.eps)
+        # Apply Hanning window to reduce edge effects
+        window = np.outer(np.hanning(processed.shape[0]), 
+                         np.hanning(processed.shape[1]))
+        return processed * window
+
+    def initialize(self, frame, bounding_box):
+        """Initialize tracker with bounding box (x,y,w,h)"""
+        x, y, w, h = bounding_box
+        self.window_size = (w, h)
+        self.position = (x + w//2, y + h//2)  # Store center position
+        
+        # Extract target region and convert to grayscale
+        target = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+        target = target.astype(np.float32)
+        
+        # Create desired Gaussian response
+        self.gaussian = np.fft.fft2(self._create_gaussian_response((h, w)))
+        
+        # Preprocess and compute FFT of target region
+        preprocessed = self._preprocess(target)
+        target_fft = np.fft.fft2(preprocessed)
+        
+        # Compute initial filter
+        numerator = self.gaussian * np.conj(target_fft)
+        denominator = target_fft * np.conj(target_fft) + self.eps
+        self.filter = numerator / denominator
+        
+        # Train with augmented samples (small rotations and scales)
+        for _ in range(8):
+            angle = np.random.uniform(-5, 5)  # Random rotation
+            scale = np.random.uniform(0.95, 1.05)  # Random scale
+            M = cv2.getRotationMatrix2D((w//2, h//2), angle, scale)
+            warped = cv2.warpAffine(target, M, (w, h))  # Apply transformation
+            
+            # Update filter with warped sample
+            warped_fft = np.fft.fft2(self._preprocess(warped))
+            A = self.gaussian * np.conj(warped_fft)
+            B = warped_fft * np.conj(warped_fft) + self.eps
+            self.filter = (1 - self.learning_rate) * self.filter + self.learning_rate * (A / B)
+
+    def update(self, frame):
+        """Update target position in new frame"""
+        if self.filter is None:
+            raise ValueError("Tracker must be initialized first")
+            
+        w, h = self.window_size
+        
+        # Convert to grayscale and extract search region
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        region = cv2.getRectSubPix(gray, (w, h), self.position)
+        
+        # Preprocess and compute FFT
+        preprocessed = self._preprocess(region)
+        region_fft = np.fft.fft2(preprocessed)
+        
+        # Compute correlation response
+        response = np.fft.ifft2(self.filter * region_fft)
+        response = np.real(response)
+        
+        # Find location with maximum response
+        _, _, _, max_loc = cv2.minMaxLoc(response)
+        dx, dy = max_loc[0] - w//2, max_loc[1] - h//2  # Displacement from center
+        
+        # Update target position
+        self.position = (self.position[0] + dx, self.position[1] + dy)
+        
+        # Extract new target region for filter update
+        x, y = int(self.position[0] - w//2), int(self.position[1] - h//2)
+        new_target = gray[y:y+h, x:x+w]
+        
+        # Update filter if region is valid
+        if new_target.shape[0] == h and new_target.shape[1] == w:
+            new_target_fft = np.fft.fft2(self._preprocess(new_target))
+            A = self.gaussian * np.conj(new_target_fft)
+            B = new_target_fft * np.conj(new_target_fft) + self.eps
+            self.filter = (1 - self.learning_rate) * self.filter + self.learning_rate * (A / B)
+        
+        return (x, y, w, h)  # Return bounding box
+
+def get_video_source():
+    """Prompt user to select video source"""
+    print("Select video source:")
+    print("1. Use camera (default)")
+    print("2. Use video file")
+    choice = input("Enter your choice (1 or 2): ")
+    
+    if choice == "2":
+        video_path = input("Enter full path to video file: ")
+        return video_path
+    return 0  # Default to camera
+
+if __name__ == "__main__":
+    # Get video source from user
+    video_source = get_video_source()
+    
+    try:
+        # Initialize video capture
+        video_capture = cv2.VideoCapture(video_source)
+        if not video_capture.isOpened():
+            raise ValueError("Could not open video source")
+            
+        # Read first frame
+        ret, first_frame = video_capture.read()
+        if not ret:
+            raise ValueError("Error reading first frame")
+        
+        # Let user select ROI
+        bbox = cv2.selectROI("Select Object to Track", first_frame, False, False)
+        cv2.destroyWindow("Select Object to Track")
+        
+        if bbox == (0, 0, 0, 0):
+            raise ValueError("No region selected")
+        
+        # Initialize tracker
+        tracker = MOSSETracker(learning_rate=0.1)
+        tracker.initialize(first_frame, bbox)
+        
+        # Tracking loop
+        while True:
+            ret, frame = video_capture.read()
+            if not ret:
+                print("End of video")
+                break
+                
+            # Update tracker and draw bounding box
+            x, y, w, h = tracker.update(frame)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.imshow("MOSSE Tracker", frame)
+            
+            # Exit on 'q' key
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+                
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # Release resources
+        video_capture.release()
+        cv2.destroyAllWindows()
