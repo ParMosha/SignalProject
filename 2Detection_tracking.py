@@ -6,7 +6,7 @@ class YOLOMultiTracker:
     def __init__(
         self,
         model_path: str = 'yolov8n.pt',
-        confidence_threshold: float = 1,
+        confidence_threshold: float = 0.8,
         detection_interval: float = 0.1
     ):
         self.model = YOLO(model_path)

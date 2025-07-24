@@ -34,7 +34,11 @@ def select_object(frame):
         return bbox
 
 def main():
-    tracker = cv2.TrackerCSRT_create()
+    try:
+        tracker = cv2.TrackerCSRT_create()
+    except AttributeError:
+        tracker = cv2.legacy.TrackerCSRT_create()
+    
     video_source = select_video_source()
     
     cap = cv2.VideoCapture(video_source)
