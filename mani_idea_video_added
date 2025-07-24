@@ -1,0 +1,283 @@
+import cv2
+import torch
+import numpy as np
+import os
+import time
+
+DETECTION_INTERVAL = 10
+IOU_THRESHOLD = 0.3
+MAX_MISSED_FRAMES = 30
+
+def calculate_iou(box1, box2):
+    x1, y1, w1, h1 = box1
+    x2, y2, w2, h2 = box2
+
+    box1_coords = [x1, y1, x1 + w1, y1 + h1]
+    box2_coords = [x2, y2, x2 + w2, y2 + h2]
+
+    x_left = max(box1_coords[0], box2_coords[0])
+    y_top = max(box1_coords[1], box2_coords[1])
+    x_right = min(box1_coords[2], box2_coords[2])
+    y_bottom = min(box1_coords[3], box2_coords[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+    box1_area = w1 * h1
+    box2_area = w2 * h2
+    union_area = box1_area + box2_area - intersection_area
+
+    if union_area == 0:
+        return 0.0
+
+    return intersection_area / union_area
+
+class YourObjectDetector:
+    def __init__(self, model_name='yolov5s', confidence_threshold=0.5):
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"Using device: {self.device}")
+        try:
+            self.model = torch.hub.load('ultralytics/yolov5', model_name, pretrained=True).to(self.device)
+            self.model.conf = confidence_threshold
+            self.model.iou = 0.45
+        except Exception as e:
+            print(f"Error loading YOLOv5 model: {e}")
+            print("Please ensure you have PyTorch, torchvision, and git installed.")
+            print("Also, check your internet connection for model download.")
+            exit()
+
+    def detect(self, frame):
+        results = self.model(frame)
+        detections = []
+        for *xyxy, conf, cls in results.xyxy[0]:
+            if int(cls) == 0:
+                x1, y1, x2, y2 = map(int, xyxy)
+                w, h = x2 - x1, y2 - y1
+                detections.append(((x1, y1, w, h), float(conf), int(cls)))
+        return detections
+
+class MyCustomTracker:
+    def __init__(self, initial_bbox, tracker_id):
+        self.tracker_id = tracker_id
+        self.bbox = initial_bbox
+        self.active = True
+        self.missing_frames_count = 0
+        self.kalman = None
+        self.prev_points = None
+        self.prev_gray = None
+        self.bbox_history = []
+
+        self._init_kalman(initial_bbox)
+        self.update_history(initial_bbox)
+
+    def _init_kalman(self, initial_bbox):
+        self.kalman = cv2.KalmanFilter(8, 4)
+        self.kalman.transitionMatrix = np.array([[1,0,0,0,1,0,0,0],[0,1,0,0,0,1,0,0],[0,0,1,0,0,0,1,0],[0,0,0,1,0,0,0,1],[0,0,0,0,1,0,0,0],[0,0,0,0,0,1,0,0],[0,0,0,0,0,0,1,0],[0,0,0,0,0,0,0,1]], np.float32)
+        self.kalman.measurementMatrix = np.array([[1,0,0,0,0,0,0,0],[0,1,0,0,0,0,0,0],[0,0,1,0,0,0,0,0],[0,0,0,1,0,0,0,0]], np.float32)
+        self.kalman.processNoiseCov = np.array([[1,0,0,0,0,0,0,0],[0,1,0,0,0,0,0,0],[0,0,1,0,0,0,0,0],[0,0,0,1,0,0,0,0],[0,0,0,0,0.01,0,0,0],[0,0,0,0,0,0.01,0,0],[0,0,0,0,0,0,0.01,0],[0,0,0,0,0,0,0,0.01]], np.float32) * 1e-2
+        self.kalman.measurementNoiseCov = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]], np.float32) * 1e-1
+        x, y, w, h = initial_bbox
+        self.kalman.statePost = np.array([[x], [y], [w], [h], [0], [0], [0], [0]], np.float32)
+
+    def _init_optical_flow_points(self, frame_gray):
+        x, y, w, h = map(int, self.bbox)
+        if w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= frame_gray.shape[1] and y + h <= frame_gray.shape[0]:
+            roi = frame_gray[y:y+h, x:x+w]
+            self.prev_points = cv2.goodFeaturesToTrack(roi, maxCorners=100, qualityLevel=0.3, minDistance=7, blockSize=7)
+            if self.prev_points is not None:
+                self.prev_points[:, 0, 0] += x
+                self.prev_points[:, 0, 1] += y
+                self.prev_gray = frame_gray.copy()
+        else:
+            self.prev_points = None
+            self.prev_gray = None
+
+    def update_with_detection(self, new_bbox, frame_gray):
+        self.bbox = new_bbox
+        x, y, w, h = new_bbox
+        self.kalman.correct(np.array([[x], [y], [w], [h]], np.float32))
+        self.missing_frames_count = 0
+        self.active = True
+        self._init_optical_flow_points(frame_gray)
+        self.update_history(new_bbox)
+
+    def update(self, current_frame_gray):
+        if not self.active:
+            return
+
+        prediction = self.kalman.predict()
+        predicted_bbox = (prediction[0][0], prediction[1][0], prediction[2][0], prediction[3][0])
+
+        if self.prev_points is not None and self.prev_gray is not None and len(self.prev_points) > 0:
+            next_points, status, err = cv2.calcOpticalFlowPyrLK(self.prev_gray, current_frame_gray, self.prev_points, None, **dict(winSize=(15,15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)))
+
+            if next_points is not None and status is not None:
+                good_new = next_points[status == 1]
+                good_old = self.prev_points[status == 1]
+
+                if len(good_new) >= 4:
+                    M, _ = cv2.estimateAffine2D(good_old, good_new)
+                    if M is not None:
+                        x, y, w, h = self.bbox
+                        corners = np.array([[x, y], [x + w, y], [x, y + h], [x + w, y + h]], dtype=np.float32).reshape(-1, 1, 2)
+                        transformed_corners = cv2.transform(corners, M).reshape(-1, 2)
+                        x_min, y_min = np.min(transformed_corners, axis=0)
+                        x_max, y_max = np.max(transformed_corners, axis=0)
+                        of_bbox = (x_min, y_min, x_max - x_min, y_max - y_min)
+                        alpha_of = 0.7 if len(good_new) > 10 else 0.4
+                        alpha_kalman = 1.0 - alpha_of
+                        self.bbox = (alpha_of * of_bbox[0] + alpha_kalman * predicted_bbox[0],
+                                     alpha_of * of_bbox[1] + alpha_kalman * predicted_bbox[1],
+                                     alpha_of * of_bbox[2] + alpha_kalman * predicted_bbox[2],
+                                     alpha_of * of_bbox[3] + alpha_kalman * predicted_bbox[3])
+                    else:
+                        self.bbox = predicted_bbox
+                else:
+                    self.bbox = predicted_bbox
+                
+                self.prev_gray = current_frame_gray.copy()
+                if len(good_new) > 0:
+                    self.prev_points = good_new.reshape(-1, 1, 2)
+                else:
+                    self.prev_points = None
+            else:
+                self.bbox = predicted_bbox
+                self.prev_points = None
+        else:
+            self._init_optical_flow_points(current_frame_gray)
+            self.bbox = predicted_bbox
+
+        self.kalman.correct(np.array([[self.bbox[0]], [self.bbox[1]], [self.bbox[2]], [self.bbox[3]]], np.float32))
+        self.missing_frames_count += 1
+        self.update_history(self.bbox)
+
+        if self.missing_frames_count > MAX_MISSED_FRAMES:
+            self.active = False
+    
+    def update_history(self, bbox):
+        self.bbox_history.append(bbox)
+        if len(self.bbox_history) > 5:
+            self.bbox_history.pop(0)
+
+def run_tracker(source, detection_interval=DETECTION_INTERVAL, iou_threshold=IOU_THRESHOLD, max_missed_frames=MAX_MISSED_FRAMES):
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        print(f"Error: Could not open video source: {source}")
+        return
+
+    object_detector = YourObjectDetector()
+    active_trackers = {} 
+    next_tracker_id = 0
+    frame_count = 0
+
+    print("--- Starting object tracking. Press 'q' to quit. ---")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("End of video stream or failed to grab frame. Exiting.")
+            break
+
+        current_gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        current_detections = [] 
+        matched_tracker_ids = set()
+
+        if frame_count % detection_interval == 0:
+            print(f"--- Frame {frame_count}: Performing full detection ---")
+            raw_detections = object_detector.detect(frame)
+            current_detections = raw_detections
+            print(f"  Found {len(current_detections)} new detections.")
+
+            matched_detection_indices = set()
+            
+            for tracker_id, tracker in list(active_trackers.items()):
+                if not tracker.active: continue
+                best_iou, best_detection_idx = 0, -1
+                for i, (det_bbox, _, _) in enumerate(current_detections):
+                    if i in matched_detection_indices: continue
+                    iou = calculate_iou(tracker.bbox, det_bbox)
+                    if iou > best_iou and iou > iou_threshold:
+                        best_iou, best_detection_idx = iou, i
+                
+                if best_detection_idx != -1:
+                    matched_tracker_ids.add(tracker_id)
+                    matched_detection_indices.add(best_detection_idx)
+                    det_bbox, _, _ = current_detections[best_detection_idx]
+                    tracker.update_with_detection(det_bbox, current_gray_frame)
+            
+            for i, (det_bbox, _, _) in enumerate(current_detections):
+                if i not in matched_detection_indices:
+                    new_tracker = MyCustomTracker(det_bbox, next_tracker_id)
+                    active_trackers[next_tracker_id] = new_tracker
+                    next_tracker_id += 1
+
+        trackers_to_remove = []
+        for tracker_id, tracker in active_trackers.items():
+            if tracker_id not in matched_tracker_ids:
+                tracker.update(current_gray_frame)
+            
+            if not tracker.active:
+                trackers_to_remove.append(tracker_id)
+
+        for tracker_id in trackers_to_remove:
+            print(f"  Removing inactive tracker ID: {tracker_id}")
+            del active_trackers[tracker_id]
+
+        for tracker_id, tracker in active_trackers.items():
+            if tracker.active:
+                x, y, w, h = map(int, tracker.bbox)
+                if w > 0 and h > 0:
+                    color = (0, 255, 0) if tracker.missing_frames_count == 0 else (0, 165, 255)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                    cv2.putText(frame, f"ID: {tracker_id}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+        cv2.imshow("Object Tracking", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            print("'q' pressed. Exiting.")
+            break
+
+        frame_count += 1
+        
+    cap.release()
+    cv2.destroyAllWindows()
+    print("Video processing finished.")
+
+
+if __name__ == "__main__":
+    source_to_process = None
+    while True:
+        print("Please choose the input source:")
+        print("1: Live Webcam")
+        print("2: Video File")
+        choice = input("Enter your choice (1 or 2): ")
+
+        if choice == '1':
+            try:
+                webcam_index_str = input("Enter webcam index [default: 0]: ")
+                if not webcam_index_str.strip():
+                    source_to_process = 0
+                else:
+                    source_to_process = int(webcam_index_str)
+                break
+            except ValueError:
+                print("Invalid index. Please enter a number.")
+
+        elif choice == '2':
+            video_path = input("Enter the full path to the video file: ")
+            video_path = video_path.strip().strip('"')
+            if os.path.exists(video_path):
+                source_to_process = video_path
+                break
+            else:
+                print(f"Error: The file '{video_path}' does not exist. Please check the path.")
+        
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+
+    if source_to_process is not None:
+        run_tracker(source=source_to_process)
+
+    print("Program finished.")
