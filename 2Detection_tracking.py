@@ -76,11 +76,27 @@ def main():
         detection_interval=0.1
     )
 
+    frame_count = 0
+    start_time = time.time()
+    prev_time = start_time
+    fps_list = []
+
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Stream ended or cannot read frame.")
             break
+
+        current_time = time.time()
+        frame_time = current_time - prev_time
+        current_fps = 1.0 / frame_time if frame_time > 0 else 0
+        fps_list.append(current_fps)
+        frame_count += 1
+        
+        if len(fps_list) > 30:
+            fps_list.pop(0)
+        
+        avg_fps = sum(fps_list) / len(fps_list) if fps_list else 0
 
         detected, objects = tracker.update(frame)
 
@@ -94,13 +110,25 @@ def main():
         status = "Detecting" if detected else "Tracking"
         cv2.putText(frame, status, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        fps = 1.0 / max(1e-6, time.time() - tracker.last_det_time)
-        cv2.putText(frame, f"FPS: {fps:.1f}", (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, f"Current FPS: {current_fps:.1f}", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, f"Average FPS: {avg_fps:.1f}", (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, f"Frames: {frame_count}", (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         cv2.imshow("YOLO Multi-Object Tracker", frame)
         if cv2.waitKey(1) & 0xFF == 27: 
             break
+
+        prev_time = current_time
+
+    total_time = time.time() - start_time
+    overall_avg_fps = frame_count / total_time if total_time > 0 else 0
+    print(f"\nTracking completed!")
+    print(f"Total frames processed: {frame_count}")
+    print(f"Total time: {total_time:.2f} seconds")
+    print(f"Overall average FPS: {overall_avg_fps:.2f}")
 
     cap.release()
     cv2.destroyAllWindows()
