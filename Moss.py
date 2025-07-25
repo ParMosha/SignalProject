@@ -125,23 +125,24 @@ if __name__ == "__main__":
     frame_count = 0
     start_time = time.time()
     fps_list = []
+    prev_time = start_time
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_start = time.time()
-        
-        x, y, w, h = tracker.update(frame)
-        
-        frame_end = time.time()
-        frame_time = frame_end - frame_start
+        # Measure time for the entire frame processing cycle
+        current_time = time.time()
+        frame_time = current_time - prev_time
         current_fps = 1.0 / frame_time if frame_time > 0 else 0
         fps_list.append(current_fps)
         frame_count += 1
         
+        # Calculate average FPS
         avg_fps = sum(fps_list) / len(fps_list) if fps_list else 0
+        
+        x, y, w, h = tracker.update(frame)
         
         cv2.rectangle(
             frame,
@@ -163,6 +164,9 @@ if __name__ == "__main__":
         key = cv2.waitKey(1) & 0xFF
         if key == 27:  # Esc key to exit
             break
+        
+        # Update previous time for next iteration
+        prev_time = current_time
 
 
     total_time = time.time() - start_time
@@ -175,6 +179,5 @@ if __name__ == "__main__":
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 
